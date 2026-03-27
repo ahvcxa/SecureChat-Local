@@ -1,0 +1,11 @@
+node_modules/
+npm-debug.log*
+chat.db
+chat.db-shm
+chat.db-wal
+.env
+.git
+.gitignore
+ai-context.md
+README.md
+.github/

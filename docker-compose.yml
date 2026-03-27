@@ -1,0 +1,20 @@
+services:
+  securechat:
+    build: .
+    container_name: securechat-local
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - PORT=3000
+      - ROOM_SECRET=${ROOM_SECRET:-default_room_secret}
+    volumes:
+      - chat-data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  chat-data:

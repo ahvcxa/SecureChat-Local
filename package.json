@@ -1,0 +1,21 @@
+{
+  "name": "securechat-local",
+  "version": "1.0.0",
+  "description": "End-to-end encrypted (E2EE) private chat application for two users. PBKDF2 + AES-256-GCM encryption via Web Crypto API.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["e2ee", "chat", "encryption", "socket.io", "sqlite", "aes-gcm", "pbkdf2", "web-crypto"],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "node-cron": "^4.2.1",
+    "socket.io": "^4.8.3"
+  }
+}
