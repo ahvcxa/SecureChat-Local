@@ -58,7 +58,7 @@ User A                         Server                        User B
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/SecureChat-Local.git
+git clone https://github.com/ahvcxa/SecureChat-Local.git
 cd SecureChat-Local
 
 # 2. Install dependencies

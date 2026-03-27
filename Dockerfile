@@ -1,9 +1,12 @@
 # ---------- Build ----------
 FROM node:18-alpine AS builder
 
+# Build tools required for better-sqlite3 (native module)
+RUN apk add --no-cache python3 make g++
+
 WORKDIR /app
 
-# Önce sadece dependency dosyalarını kopyala (cache optimizasyonu)
+# Copy dependency files first (cache optimization)
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
