@@ -16,8 +16,10 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
-const ROOM_SECRET = process.env.ROOM_SECRET || 'default_room_secret';
 const CHAT_ROOM = 'secure_chat_room';
+
+// Dynamic room password (set by the first user, reset when room empties)
+let currentRoomSecret = null;
 
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
@@ -32,36 +34,48 @@ io.on('connection', (socket) => {
     // Authentication / Room Join
     socket.on('join_room', (data, callback) => {
         const { secret, nickname } = data;
-        if (secret === ROOM_SECRET) {
-            const room = io.sockets.adapter.rooms.get(CHAT_ROOM);
-            const numClients = room ? room.size : 0;
-            
-            if (numClients >= 2) {
-                console.log(`User ${socket.id} rejected. Room is full.`);
-                callback({ success: false, error: "Room is full (maximum 2 users)." });
-                return;
-            }
 
-            const userNick = (nickname || 'Anonymous').substring(0, 20);
-            socket.data.nickname = userNick;
-            socket.join(CHAT_ROOM);
-            socket.data.joined = true;
-            console.log(`User ${userNick} (${socket.id}) joined the secure room. (${numClients + 1}/2)`);
-            
-            // Notify other users in the room about the new participant
-            socket.to(CHAT_ROOM).emit('user_joined', { id: socket.id, nickname: userNick });
-            
-            // Send existing messages and socket id to the user
-            try {
-                const messages = getAllMessages();
-                callback({ success: true, messages, socketId: socket.id }); 
-            } catch (err) {
-                console.error("Error fetching messages for new user:", err);
-                callback({ success: false, error: "Database error." });
-            }
-        } else {
+        if (!secret || secret.trim().length === 0) {
+            callback({ success: false, error: "Room password cannot be empty." });
+            return;
+        }
+
+        const room = io.sockets.adapter.rooms.get(CHAT_ROOM);
+        const numClients = room ? room.size : 0;
+
+        if (numClients >= 2) {
+            console.log(`User ${socket.id} rejected. Room is full.`);
+            callback({ success: false, error: "Room is full (maximum 2 users)." });
+            return;
+        }
+
+        // First user: set the room password
+        // Second user: must match the existing password
+        if (currentRoomSecret === null) {
+            currentRoomSecret = secret;
+            console.log(`Room password set by ${socket.id}.`);
+        } else if (secret !== currentRoomSecret) {
             console.log(`User ${socket.id} failed room authentication.`);
-            callback({ success: false, error: "Invalid room secret." });
+            callback({ success: false, error: "Invalid room password." });
+            return;
+        }
+
+        const userNick = (nickname || 'Anonymous').substring(0, 20);
+        socket.data.nickname = userNick;
+        socket.join(CHAT_ROOM);
+        socket.data.joined = true;
+        console.log(`User ${userNick} (${socket.id}) joined the secure room. (${numClients + 1}/2)`);
+        
+        // Notify other users in the room about the new participant
+        socket.to(CHAT_ROOM).emit('user_joined', { id: socket.id, nickname: userNick });
+        
+        // Send existing messages and socket id to the user
+        try {
+            const messages = getAllMessages();
+            callback({ success: true, messages, socketId: socket.id }); 
+        } catch (err) {
+            console.error("Error fetching messages for new user:", err);
+            callback({ success: false, error: "Database error." });
         }
     });
 
@@ -136,7 +150,8 @@ io.on('connection', (socket) => {
             
             if (remaining === 0) {
                 deleteAllMessages();
-                console.log('Both users left. All messages cleared from database.');
+                currentRoomSecret = null;
+                console.log('Both users left. All messages cleared and room password reset.');
             }
         }
     });

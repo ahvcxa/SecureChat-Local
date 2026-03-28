@@ -7,7 +7,6 @@ services:
       - "${PORT:-3000}:3000"
     environment:
       - PORT=3000
-      - ROOM_SECRET=${ROOM_SECRET:-default_room_secret}
     volumes:
       - chat-data:/app/data
     healthcheck:

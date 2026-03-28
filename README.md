@@ -18,6 +18,7 @@ End-to-end encrypted (E2EE) private chat application for two users. All messages
 | 👥 **2-User Limit** | Room is capped at 2 users — guaranteed privacy |
 | 💾 **Message History** | SQLite + localStorage hybrid for session-based persistence |
 | 🗑️ **Message Deletion** | `/delete` and `/deleteall` commands for secure deletion |
+| 🔑 **Dynamic Room Password** | First user sets the password — no `.env` config needed |
 | 🔗 **Invite Link** | One-click auto-join invite link generation |
 | 🧹 **Auto Cleanup** | DB is cleared when the room empties + hourly cron safety net |
 | 🐳 **Docker Ready** | Single command deployment — `docker compose up` |
@@ -64,13 +65,11 @@ cd SecureChat-Local
 # 2. Install dependencies
 npm install
 
-# 3. Configure environment variables
-cp .env.example .env
-# Edit .env — change ROOM_SECRET to your own secret
-
-# 4. Start the server
+# 3. Start the server
 npm start
 ```
+
+> **Note:** No `.env` configuration required! The first user to join sets the room password. The second user enters the same password to join.
 
 Open `http://localhost:3000` in your browser.
 
@@ -81,9 +80,6 @@ Open `http://localhost:3000` in your browser.
 ### Docker Compose (Recommended)
 
 ```bash
-# Create .env file
-cp .env.example .env
-
 # Start
 docker compose up -d
 
@@ -101,7 +97,6 @@ docker build -t securechat-local .
 docker run -d \
   --name securechat \
   -p 3000:3000 \
-  -e ROOM_SECRET=your_secret_here \
   securechat-local
 ```
 
@@ -119,7 +114,7 @@ npx untun@latest tunnel http://localhost:3000
 
 This generates a public URL you can share. Works with both local and Docker setups.
 
-> **Note:** The tunnel URL changes each time. Share it privately — anyone with the URL can access the login page (but still needs the room secret to join).
+> **Note:** The tunnel URL changes each time. Share it privately — anyone with the URL can access the login page (but still needs the room password to join).
 
 ---
 
@@ -128,7 +123,8 @@ This generates a public URL you can share. Works with both local and Docker setu
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `3000` | Server port |
-| `ROOM_SECRET` | `default_room_secret` | Shared room secret (all users must use the same secret) |
+
+> **Room password** is now set dynamically by the first user — no environment variable needed.
 
 ---
 
@@ -180,7 +176,7 @@ SecureChat-Local/
 - The server **never** has access to plaintext messages
 - Only **encrypted payloads** are stored in the database
 - Database is **automatically cleared** when the room empties
-- `.env` is included in `.gitignore` — your room secret stays safe
+- Room password is stored **only in memory** — resets when the room empties
 
 ---
 
