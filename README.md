@@ -109,6 +109,20 @@ Open `http://localhost:3000` in your browser.
 
 ---
 
+## 🌐 Public Access (Tunnel)
+
+Want to chat with someone on a different network? Use [untun](https://github.com/unjs/untun) to create a public tunnel:
+
+```bash
+npx untun@latest tunnel http://localhost:3000
+```
+
+This generates a public URL you can share. Works with both local and Docker setups.
+
+> **Note:** The tunnel URL changes each time. Share it privately — anyone with the URL can access the login page (but still needs the room secret to join).
+
+---
+
 ## ⚙️ Environment Variables
 
 | Variable | Default | Description |
