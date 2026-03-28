@@ -133,7 +133,9 @@ This generates a public URL you can share. Works with both local and Docker setu
 | Command | Action |
 |---------|--------|
 | `/delete` | Deletes **all your own messages** (does not affect the other user's messages) |
+| `/deletelast` | Deletes **your last sent message** only |
 | `/deleteall` | Sends approval request to the other user — if accepted, **all chat history** is deleted |
+| `/quit` | Leaves the room (you can rejoin with a new password) |
 
 ---
 

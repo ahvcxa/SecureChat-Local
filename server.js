@@ -8,7 +8,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const { insertMessage, getAllMessages, deleteAllMessages, deleteMessagesBySender } = require('./db.js');
+const { insertMessage, getAllMessages, deleteAllMessages, deleteMessagesBySender, deleteLastMessageBySender } = require('./db.js');
 const { startCleanupJob } = require('./cleanup.js');
 
 const app = express();
@@ -135,6 +135,45 @@ io.on('connection', (socket) => {
             if (requesterSocket) {
                 requesterSocket.emit('delete_all_rejected', { nickname: socket.data.nickname });
             }
+        }
+    });
+
+    // Delete last message sent by this user
+    socket.on('delete_last_message', (callback) => {
+        if (!socket.rooms.has(CHAT_ROOM)) {
+            if (callback) callback({ success: false, error: "You have not joined a room." });
+            return;
+        }
+        try {
+            const result = deleteLastMessageBySender(socket.id);
+            if (result.changes > 0) {
+                socket.to(CHAT_ROOM).emit('last_message_deleted', { nickname: socket.data.nickname, senderId: socket.id });
+                if (callback) callback({ success: true });
+            } else {
+                if (callback) callback({ success: false, error: "No messages to delete." });
+            }
+        } catch (err) {
+            console.error("Error deleting last message:", err);
+            if (callback) callback({ success: false, error: "Failed to delete message." });
+        }
+    });
+
+    // Quit room (user voluntarily leaves)
+    socket.on('quit_room', () => {
+        if (!socket.rooms.has(CHAT_ROOM)) return;
+        const nick = socket.data.nickname || 'Anonymous';
+        socket.leave(CHAT_ROOM);
+        socket.data.joined = false;
+        socket.broadcast.to(CHAT_ROOM).emit('user_left', { id: socket.id, nickname: nick });
+        console.log(`User ${nick} (${socket.id}) quit the room.`);
+
+        // Clear all messages when the room is completely empty
+        const room = io.sockets.adapter.rooms.get(CHAT_ROOM);
+        const remaining = room ? room.size : 0;
+        if (remaining === 0) {
+            deleteAllMessages();
+            currentRoomSecret = null;
+            console.log('Room empty after quit. All messages cleared and room password reset.');
         }
     });
 

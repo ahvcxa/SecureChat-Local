@@ -279,6 +279,16 @@ socket.on('all_messages_deleted', () => {
     addSystemMessage('🗑️ All chat history has been deleted.');
 });
 
+// When the other user deletes their last message
+socket.on('last_message_deleted', (data) => {
+    // Remove the last received message from DOM
+    const theirMsgs = chatContainer.querySelectorAll('.message-wrapper.received');
+    if (theirMsgs.length > 0) {
+        theirMsgs[theirMsgs.length - 1].remove();
+    }
+    addSystemMessage(`🗑️ ${data.nickname} deleted their last message.`);
+});
+
 // Deletion request was rejected
 socket.on('delete_all_rejected', (data) => {
     addSystemMessage(`❌ ${data.nickname} rejected your deletion request.`);
@@ -326,6 +336,38 @@ async function sendMessage() {
     if (text === '/deleteall') {
         socket.emit('request_delete_all');
         addSystemMessage('⏳ Delete all request sent to the other user. Waiting for approval...');
+        return;
+    }
+
+    // /deletelast — delete the last message you sent
+    if (text === '/deletelast') {
+        socket.emit('delete_last_message', (response) => {
+            if (response && response.success) {
+                // Remove last sent message from DOM
+                const myMsgs = chatContainer.querySelectorAll('.message-wrapper.sent');
+                if (myMsgs.length > 0) {
+                    myMsgs[myMsgs.length - 1].remove();
+                }
+                addSystemMessage('🗑️ Your last message has been deleted.');
+            } else {
+                showToast(response?.error || 'No messages to delete.');
+            }
+        });
+        return;
+    }
+
+    // /quit — leave the chat room
+    if (text === '/quit') {
+        socket.emit('quit_room');
+        isJoined = false;
+        mySocketId = null;
+        loginOverlay.classList.remove('hidden');
+        messageInput.disabled = true;
+        sendMessageBtn.disabled = true;
+        chatContainer.innerHTML = '';
+        localStorage.removeItem(STORAGE_KEY);
+        updateStatus('disconnected');
+        addSystemMessage('👋 You left the room.');
         return;
     }
 
