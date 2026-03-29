@@ -19,7 +19,7 @@ End-to-end encrypted (E2EE) private chat application for two users. All messages
 | 💾 **Message History** | SQLite + localStorage hybrid for session-based persistence |
 | 🗑️ **Message Deletion** | `/delete` and `/deleteall` commands for secure deletion |
 | 🔑 **Dynamic Room Password** | First user sets the password — no `.env` config needed |
-| 🔗 **Invite Link** | One-click auto-join invite link generation |
+| 🔗 **Invite Link** | Single-use invite token (expires in 5 minutes), no secret in URL |
 | 🧹 **Auto Cleanup** | DB is cleared when the room empties + hourly cron safety net |
 | 🐳 **Docker Ready** | Single command deployment — `docker compose up` |
 | 📱 **Responsive** | Modern, premium dark-mode UI (glassmorphism) |

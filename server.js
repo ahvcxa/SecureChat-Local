@@ -6,6 +6,7 @@
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
+const crypto = require('crypto');
 const { Server } = require('socket.io');
 const path = require('path');
 const { insertMessage, getAllMessages, deleteAllMessages, deleteMessagesBySender, deleteLastMessageBySender } = require('./db.js');
@@ -17,9 +18,32 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 const CHAT_ROOM = 'secure_chat_room';
+const INVITE_TTL_MS = 5 * 60 * 1000;
 
 // Dynamic room password (set by the first user, reset when room empties)
 let currentRoomSecret = null;
+const inviteTokens = new Map();
+
+function cleanupExpiredInvites() {
+    const now = Date.now();
+    for (const [token, invite] of inviteTokens.entries()) {
+        if (!invite || invite.expiresAt <= now) {
+            inviteTokens.delete(token);
+        }
+    }
+}
+
+function clearAllInvites() {
+    inviteTokens.clear();
+}
+
+function generateInviteToken() {
+    let token = crypto.randomBytes(32).toString('base64url');
+    while (inviteTokens.has(token)) {
+        token = crypto.randomBytes(32).toString('base64url');
+    }
+    return token;
+}
 
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
@@ -76,6 +100,92 @@ io.on('connection', (socket) => {
         } catch (err) {
             console.error("Error fetching messages for new user:", err);
             callback({ success: false, error: "Database error." });
+        }
+    });
+
+    socket.on('create_invite', (callback) => {
+        if (!socket.rooms.has(CHAT_ROOM)) {
+            if (callback) callback({ success: false, error: 'Join the room first.', code: 'NOT_IN_ROOM' });
+            return;
+        }
+
+        if (!currentRoomSecret) {
+            if (callback) callback({ success: false, error: 'Room secret is not ready.', code: 'SECRET_NOT_READY' });
+            return;
+        }
+
+        cleanupExpiredInvites();
+
+        const token = generateInviteToken();
+        inviteTokens.set(token, {
+            secret: currentRoomSecret,
+            expiresAt: Date.now() + INVITE_TTL_MS,
+            used: false
+        });
+
+        if (callback) {
+            callback({
+                success: true,
+                token,
+                expiresInMs: INVITE_TTL_MS
+            });
+        }
+    });
+
+    socket.on('join_room_with_invite', (data, callback) => {
+        const { token, nickname } = data || {};
+        cleanupExpiredInvites();
+
+        if (!token || typeof token !== 'string') {
+            callback({ success: false, error: 'Invalid invite link.', code: 'INVALID_INVITE' });
+            return;
+        }
+
+        const invite = inviteTokens.get(token);
+        if (!invite) {
+            callback({ success: false, error: 'Invite not found or expired.', code: 'INVITE_INVALID_OR_EXPIRED' });
+            return;
+        }
+
+        if (invite.used) {
+            callback({ success: false, error: 'This invite link was already used.', code: 'INVITE_USED' });
+            return;
+        }
+
+        if (invite.expiresAt <= Date.now()) {
+            inviteTokens.delete(token);
+            callback({ success: false, error: 'Invite link expired. Create a new one.', code: 'INVITE_EXPIRED' });
+            return;
+        }
+
+        const room = io.sockets.adapter.rooms.get(CHAT_ROOM);
+        const numClients = room ? room.size : 0;
+        if (numClients >= 2) {
+            callback({ success: false, error: 'Room is full (maximum 2 users).', code: 'ROOM_FULL' });
+            return;
+        }
+
+        if (!currentRoomSecret || invite.secret !== currentRoomSecret) {
+            inviteTokens.delete(token);
+            callback({ success: false, error: 'Invite is no longer valid.', code: 'INVITE_INVALID' });
+            return;
+        }
+
+        const userNick = (nickname || 'Anonymous').substring(0, 20);
+        socket.data.nickname = userNick;
+        socket.join(CHAT_ROOM);
+        socket.data.joined = true;
+        invite.used = true;
+
+        console.log(`User ${userNick} (${socket.id}) joined room with invite. (${numClients + 1}/2)`);
+        socket.to(CHAT_ROOM).emit('user_joined', { id: socket.id, nickname: userNick });
+
+        try {
+            const messages = getAllMessages();
+            callback({ success: true, messages, socketId: socket.id, secret: invite.secret });
+        } catch (err) {
+            console.error('Error fetching messages for invite join:', err);
+            callback({ success: false, error: 'Database error.' });
         }
     });
 
@@ -173,6 +283,7 @@ io.on('connection', (socket) => {
         if (remaining === 0) {
             deleteAllMessages();
             currentRoomSecret = null;
+            clearAllInvites();
             console.log('Room empty after quit. All messages cleared and room password reset.');
         }
     });
@@ -190,6 +301,7 @@ io.on('connection', (socket) => {
             if (remaining === 0) {
                 deleteAllMessages();
                 currentRoomSecret = null;
+                clearAllInvites();
                 console.log('Both users left. All messages cleared and room password reset.');
             }
         }

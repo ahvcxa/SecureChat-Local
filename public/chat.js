@@ -15,7 +15,9 @@ const socket = io({ autoConnect: false });
 const loginOverlay = document.getElementById('loginOverlay');
 const loginForm = document.getElementById('loginForm');
 const roomSecretInput = document.getElementById('roomSecretInput');
+const roomSecretGroup = document.getElementById('roomSecretGroup');
 const nicknameInput = document.getElementById('nicknameInput');
+const loginSubtitle = document.getElementById('loginSubtitle');
 const joinBtn = document.getElementById('joinBtn');
 const chatContainer = document.getElementById('chatContainer');
 const messageInput = document.getElementById('messageInput');
@@ -29,26 +31,58 @@ const copyInviteBtn = document.getElementById('copyInviteBtn');
 let isJoined = false;
 let mySocketId = null;
 let myNickname = null;
+let pendingInviteToken = null;
 
 // localStorage key
 const STORAGE_KEY = 'securechat_messages';
 
-// Auto-Login via URL
+// Invite token via URL
 const urlParams = new URLSearchParams(window.location.search);
-const secretQuery = urlParams.get('secret');
-if (secretQuery) {
-    roomSecretInput.value = secretQuery;
-    setTimeout(() => {
-        joinBtn.click();
-    }, 300);
+const inviteQuery = urlParams.get('invite');
+if (inviteQuery) {
+    pendingInviteToken = inviteQuery;
+    if (window.history && window.history.replaceState) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
 }
+
+function applyLoginMode() {
+    const inviteMode = Boolean(pendingInviteToken);
+    if (roomSecretGroup) {
+        roomSecretGroup.style.display = inviteMode ? 'none' : '';
+    }
+    if (roomSecretInput) {
+        roomSecretInput.required = !inviteMode;
+    }
+    if (loginSubtitle) {
+        loginSubtitle.textContent = inviteMode
+            ? 'Invite link detected. Enter your nickname to join securely.'
+            : 'Join the E2EE-secured private chat.';
+    }
+}
+
+applyLoginMode();
 
 // Copy Invite Link
 if (copyInviteBtn) {
     copyInviteBtn.addEventListener('click', () => {
-        const inviteUrl = window.location.origin + window.location.pathname + '?secret=' + encodeURIComponent(roomSecretInput.value);
-        navigator.clipboard.writeText(inviteUrl).then(() => {
-            showToast("Invite link copied! Share it with your friend.", 4000, 'success');
+        if (!socket.connected || !isJoined) {
+            showToast('Join room first to create invite links.');
+            return;
+        }
+
+        socket.emit('create_invite', (response) => {
+            if (!response || !response.success) {
+                showToast(response?.error || 'Failed to create invite link.');
+                return;
+            }
+
+            const inviteUrl = window.location.origin + window.location.pathname + '?invite=' + encodeURIComponent(response.token);
+            navigator.clipboard.writeText(inviteUrl).then(() => {
+                showToast('Invite link copied! Valid for 5 minutes, single-use.', 4500, 'success');
+            }).catch(() => {
+                showToast('Failed to copy invite link.');
+            });
         });
     });
 }
@@ -397,7 +431,6 @@ async function sendMessage() {
 loginForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const secret = roomSecretInput.value.trim();
-    if (!secret) return;
 
     joinBtn.disabled = true;
     joinBtn.textContent = "Connecting...";
@@ -411,6 +444,14 @@ loginForm.addEventListener('submit', (e) => {
         return;
     }
 
+    const isInviteJoin = Boolean(pendingInviteToken);
+    if (!isInviteJoin && !secret) {
+        showToast('Please enter room secret.');
+        joinBtn.disabled = false;
+        joinBtn.textContent = 'Join Room';
+        return;
+    }
+
     // Connect socket if not already connected
     if (!socket.connected) {
         socket.connect();
@@ -418,6 +459,41 @@ loginForm.addEventListener('submit', (e) => {
 
     // Join room once connected
     const doJoin = () => {
+        if (isInviteJoin) {
+            socket.emit('join_room_with_invite', { token: pendingInviteToken, nickname }, async (response) => {
+                if (response.success) {
+                    isJoined = true;
+                    mySocketId = response.socketId;
+                    myNickname = nickname;
+                    pendingInviteToken = null;
+                    applyLoginMode();
+                    loginOverlay.classList.add('hidden');
+                    joinBtn.disabled = false;
+                    joinBtn.textContent = 'Join Room';
+                    if (copyInviteBtn) copyInviteBtn.style.display = 'block';
+                    document.getElementById('chatContainer').innerHTML = '';
+                    addSystemMessage('🚀 Joined the room using invite link.');
+
+                    await CryptoService.deriveKeyFromPassword(response.secret);
+                    updateStatus('e2ee-ready');
+                    messageInput.disabled = false;
+                    sendMessageBtn.disabled = false;
+                    addSystemMessage('🔐 E2EE active — messages are encrypted.');
+
+                    await loadHistory(response.messages);
+                } else {
+                    showToast(response.error || 'Failed to join with invite link.');
+                    joinBtn.disabled = false;
+                    joinBtn.textContent = 'Join Room';
+                    if (response?.code === 'INVITE_USED' || response?.code === 'INVITE_EXPIRED' || response?.code === 'INVITE_INVALID_OR_EXPIRED' || response?.code === 'INVITE_INVALID') {
+                        pendingInviteToken = null;
+                        applyLoginMode();
+                    }
+                }
+            });
+            return;
+        }
+
         socket.emit('join_room', { secret, nickname }, async (response) => {
         if (response.success) {
             isJoined = true;

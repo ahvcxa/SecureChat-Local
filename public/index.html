@@ -512,14 +512,14 @@
         <!-- Room Join Overlay -->
         <div id="loginOverlay" class="overlay">
             <div class="login-card">
-                <h2>Room Password</h2>
-                <p>Join the E2EE-secured private chat</p>
+                <h2>SecureChat</h2>
+                <p id="loginSubtitle">Join the E2EE-secured private chat.</p>
                 <form id="loginForm">
                     <div class="input-group">
                         <label for="nicknameInput">Nickname</label>
                         <input type="text" id="nicknameInput" class="input-field" placeholder="Enter your nickname..." required maxlength="20" autocomplete="off">
                     </div>
-                    <div class="input-group">
+                    <div class="input-group" id="roomSecretGroup">
                         <label for="roomSecretInput">Secret</label>
                         <input type="password" id="roomSecretInput" class="input-field" placeholder="Enter room password..." required>
                     </div>
