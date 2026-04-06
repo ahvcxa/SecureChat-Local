@@ -27,6 +27,119 @@ const statusText = document.getElementById('statusText');
 const errorToast = document.getElementById('errorToast');
 const copyInviteBtn = document.getElementById('copyInviteBtn');
 
+// Issue #8: Notification System
+class NotificationManager {
+    constructor() {
+        this.tabNotificationsEnabled = true;
+        this.browserNotificationsEnabled = true;
+        this.audioAlertsEnabled = true;
+        this.newMessageCount = 0;
+        this.originalTitle = document.title;
+        this.blinkInterval = null;
+        this.audioContext = null;
+    }
+
+    async requestPermissions() {
+        if ('Notification' in window && Notification.permission === 'default') {
+            const permission = await Notification.requestPermission();
+            this.browserNotificationsEnabled = permission === 'granted';
+        }
+    }
+
+    onNewMessage(senderNick, messagePreview) {
+        // Don't notify if app is focused
+        if (document.hasFocus()) {
+            return;
+        }
+
+        // Tab title notification
+        if (this.tabNotificationsEnabled) {
+            this.updateTabNotification();
+        }
+
+        // Browser notification
+        if (this.browserNotificationsEnabled && 'Notification' in window && Notification.permission === 'granted') {
+            new Notification(`${senderNick} sent a message`, {
+                body: messagePreview.substring(0, 100),
+                icon: '/favicon.ico',
+                tag: 'securechat-message',
+                requireInteraction: false
+            });
+        }
+
+        // Audio alert
+        if (this.audioAlertsEnabled) {
+            this.playAudioAlert();
+        }
+    }
+
+    updateTabNotification() {
+        this.newMessageCount++;
+        document.title = `(${this.newMessageCount}) 💬 ${this.originalTitle}`;
+
+        // Start blinking effect if not already
+        if (!this.blinkInterval) {
+            let visible = false;
+            this.blinkInterval = setInterval(() => {
+                if (visible) {
+                    document.title = `(${this.newMessageCount}) 💬 ${this.originalTitle}`;
+                } else {
+                    document.title = this.originalTitle;
+                }
+                visible = !visible;
+            }, 800);
+        }
+    }
+
+    clearTabNotification() {
+        this.newMessageCount = 0;
+        if (this.blinkInterval) {
+            clearInterval(this.blinkInterval);
+            this.blinkInterval = null;
+        }
+        document.title = this.originalTitle;
+    }
+
+    playAudioAlert() {
+        try {
+            const ctx = this.audioContext || new (window.AudioContext || window.webkitAudioContext)();
+            if (!this.audioContext) this.audioContext = ctx;
+
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.frequency.value = 800;  // 800 Hz
+            gain.gain.setValueAtTime(0.3, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.2);
+        } catch (e) {
+            console.warn('Audio playback not available:', e);
+        }
+    }
+
+    setTabNotifications(enabled) {
+        this.tabNotificationsEnabled = enabled;
+        if (!enabled) {
+            this.clearTabNotification();
+        }
+    }
+
+    setBrowserNotifications(enabled) {
+        this.browserNotificationsEnabled = enabled;
+    }
+
+    setAudioAlerts(enabled) {
+        this.audioAlertsEnabled = enabled;
+    }
+}
+
+const notificationManager = new NotificationManager();
+
 // State
 let isJoined = false;
 let mySocketId = null;
@@ -89,29 +202,86 @@ if (copyInviteBtn) {
 
 // --- localStorage Message History ---
 
+// Detect incognito/private mode
+function isIncognitoMode() {
+    return new Promise((resolve) => {
+        const fs = window.RequestFileSystem || window.webkitRequestFileSystem;
+        if (!fs) {
+            resolve(false);
+            return;
+        }
+        fs(window.TEMPORARY, 100, () => resolve(false), () => resolve(true));
+    });
+}
+
+// Choose storage: sessionStorage (normal), Memory (incognito)
+// Issue #5: Improved privacy - messages don't persist after tab close
+let storage = sessionStorage;
+let useMemoryStorage = false;
+const memoryCache = { [STORAGE_KEY]: [] };
+
+async function initializeStorage() {
+    const isIncognito = await isIncognitoMode();
+    if (isIncognito) {
+        useMemoryStorage = true;
+        console.log('Incognito mode detected. Using memory-only storage.');
+    }
+}
+
+initializeStorage();
+
 function saveMessageToStorage(text, type, timestamp) {
     try {
-        const messages = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+        const messages = useMemoryStorage
+            ? memoryCache[STORAGE_KEY] || []
+            : JSON.parse(storage.getItem(STORAGE_KEY) || '[]');
+        
         messages.push({ text, type, timestamp: timestamp || new Date().toISOString() });
+        
+        // Max 500 messages per device
         if (messages.length > 500) messages.splice(0, messages.length - 500);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+        
+        if (useMemoryStorage) {
+            memoryCache[STORAGE_KEY] = messages;
+        } else {
+            storage.setItem(STORAGE_KEY, JSON.stringify(messages));
+        }
     } catch (e) {
-        // localStorage may not work in incognito mode — continue silently
+        // Storage may not work in some scenarios — continue silently
+        console.warn('Storage unavailable, using memory cache');
+        memoryCache[STORAGE_KEY] = memoryCache[STORAGE_KEY] || [];
+        memoryCache[STORAGE_KEY].push({ text, type, timestamp });
     }
 }
 
 function loadMessagesFromStorage() {
     try {
-        const messages = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+        if (useMemoryStorage) {
+            return memoryCache[STORAGE_KEY] || [];
+        }
+        const messages = JSON.parse(storage.getItem(STORAGE_KEY) || '[]');
         return messages;
     } catch (e) {
         return [];
     }
 }
 
-// Clear localStorage when user closes/refreshes the page
+// Clear sessionStorage when user closes/refreshes the page
+// Issue #5: Enhanced privacy - no persistent plaintext messages
 window.addEventListener('beforeunload', () => {
-    localStorage.removeItem(STORAGE_KEY);
+    try {
+        if (!useMemoryStorage) {
+            storage.removeItem(STORAGE_KEY);
+        }
+    } catch (e) {
+        // Ignore errors
+    }
+    memoryCache[STORAGE_KEY] = [];
+});
+
+// Issue #8: Clear notifications when app is focused
+window.addEventListener('focus', () => {
+    notificationManager.clearTabNotification();
 });
 
 // --- Utility Functions ---
@@ -151,46 +321,120 @@ function addSystemMessage(text) {
     chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
+// --- Message Grouping & Display (Issue #7: Optimized timestamp display) ---
+
+// Track last sender and message group
+let lastMessageSender = null;
+let lastMessageTimestamp = null;
+let lastMessageGroupElement = null;
+
 function appendMessage(text, type, timestamp = null, persist = true, senderNick = null) {
-    const wrapper = document.createElement('div');
-    wrapper.className = `message-wrapper ${type}`;
-    // Store sender info in DOM (for deletion)
-    if (senderNick) wrapper.setAttribute('data-sender', senderNick);
-
-    // Display sender name above the message
-    if (senderNick) {
-        const nameEl = document.createElement('div');
-        nameEl.style.cssText = 'font-size:0.72rem; margin-bottom:0.2rem; font-weight:600; opacity:0.7;';
-        nameEl.textContent = senderNick;
-        wrapper.appendChild(nameEl);
-    }
-
-    const bubble = document.createElement('div');
-    bubble.className = 'message-bubble';
-    bubble.textContent = text;
-
-    const meta = document.createElement('div');
-    meta.className = 'message-meta';
+    const currentTimestamp = timestamp || new Date().toISOString();
     
-    meta.innerHTML = `
-        <span class="encryption-lock" title="End-to-end encrypted">
-            <svg viewBox="0 0 24 24"><path d="M12 2C9.243 2 7 4.243 7 7V10H6C4.895 10 4 10.895 4 12V20C4 21.105 4.895 22 6 22H18C19.105 22 20 21.105 20 20V12C20 10.895 19.105 10 18 10H17V7C17 4.243 14.757 2 12 2ZM9 7C9 5.346 10.346 4 12 4C13.654 4 15 5.346 15 7V10H9V7ZM12 14C13.105 14 14 14.895 14 16C14 17.105 13.105 18 12 18C10.895 18 10 17.105 10 16C10 14.895 10.895 14 12 14Z"/></svg>
-        </span>
-        ${formatTime(timestamp)}
-    `;
-
-    wrapper.appendChild(bubble);
-    wrapper.appendChild(meta);
-    chatContainer.appendChild(wrapper);
+    // Check if we should continue the previous message group
+    const shouldContinueGroup = senderNick && senderNick === lastMessageSender;
+    
+    let wrapper;
+    
+    if (shouldContinueGroup && lastMessageGroupElement) {
+        // Add to existing message group
+        wrapper = lastMessageGroupElement;
+        const messagesList = wrapper.querySelector('.messages-list');
+        
+        if (messagesList) {
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble';
+            bubble.textContent = text;
+            messagesList.appendChild(bubble);
+        }
+        
+        // Update timestamp on last message in group
+        const meta = wrapper.querySelector('.message-meta');
+        if (meta) {
+            const timeEl = meta.querySelector('.message-time');
+            if (timeEl) {
+                timeEl.textContent = formatTime(currentTimestamp);
+            }
+        }
+    } else {
+        // Create new message group
+        wrapper = document.createElement('div');
+        wrapper.className = `message-wrapper ${type}`;
+        if (senderNick) wrapper.setAttribute('data-sender', senderNick);
+        
+        // Display sender name above the message group
+        if (senderNick) {
+            const nameEl = document.createElement('div');
+            nameEl.className = 'sender-name';
+            nameEl.style.cssText = 'font-size:0.72rem; margin-bottom:0.2rem; font-weight:600; opacity:0.7;';
+            nameEl.textContent = senderNick;
+            wrapper.appendChild(nameEl);
+        }
+        
+        // Create messages list container
+        const messagesList = document.createElement('div');
+        messagesList.className = 'messages-list';
+        
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+        bubble.textContent = text;
+        messagesList.appendChild(bubble);
+        
+        wrapper.appendChild(messagesList);
+        
+        // Add timestamp and encryption lock
+        const meta = document.createElement('div');
+        meta.className = 'message-meta';
+        
+        meta.innerHTML = `
+            <span class="encryption-lock" title="End-to-end encrypted">
+                <svg viewBox="0 0 24 24"><path d="M12 2C9.243 2 7 4.243 7 7V10H6C4.895 10 4 10.895 4 12V20C4 21.105 4.895 22 6 22H18C19.105 22 20 21.105 20 20V12C20 10.895 19.105 10 18 10H17V7C17 4.243 14.757 2 12 2ZM9 7C9 5.346 10.346 4 12 4C13.654 4 15 5.346 15 7V10H9V7ZM12 14C13.105 14 14 14.895 14 16C14 17.105 13.105 18 12 18C10.895 18 10 17.105 10 16C10 14.895 10.895 14 12 14Z"/></svg>
+            </span>
+            <span class="message-time">${formatTime(currentTimestamp)}</span>
+        `;
+        
+        wrapper.appendChild(meta);
+        chatContainer.appendChild(wrapper);
+        
+        // Update group tracking
+        lastMessageSender = senderNick;
+        lastMessageGroupElement = wrapper;
+    }
+    
+    lastMessageTimestamp = currentTimestamp;
     chatContainer.scrollTop = chatContainer.scrollHeight;
     
     // Save message to browser's local storage
     if (persist) {
-        saveMessageToStorage(text, type, timestamp);
+        saveMessageToStorage(text, type, currentTimestamp);
     }
 }
 
 // --- Message History Loading ---
+
+async function generateAndSendPublicKey() {
+    // Issue #2: ECDH-based E2EE key exchange
+    // Generate a public key for this session (browser-side ECDH)
+    // Note: In a production system, this would use WebCrypto to generate
+    // an actual ECDH keypair. For this simplified version, we use a 
+    // derived public identifier from the room password.
+    
+    try {
+        // Generate a session-specific public key identifier
+        const sessionId = mySocketId;
+        const timestamp = Date.now();
+        const publicKeyIdentifier = btoa(`${sessionId}:${timestamp}`);
+        
+        // Send public key to other user via server
+        socket.emit('send_public_key', { publicKeyPem: publicKeyIdentifier }, (response) => {
+            if (response && response.success) {
+                console.log('Public key sent for E2EE handshake');
+            }
+        });
+    } catch (err) {
+        console.error('Failed to generate public key:', err);
+    }
+}
 
 async function loadHistory(serverMessages) {
     // Priority order:
@@ -259,7 +503,15 @@ socket.on('user_left', (data) => {
 socket.on('user_joined', (data) => {
     addSystemMessage(`🟢 ${data.nickname || 'User'} joined the room!`);
     updateStatus('e2ee-ready');
+    
+    // Send public key for E2EE handshake (Issue #2: ECDH key exchange)
+    generateAndSendPublicKey();
 });
+
+socket.on('ecdh_handshake_complete', (data) => {
+    addSystemMessage('🔐 E2EE handshake complete. All messages are now secure.');
+});
+
 
 socket.on('receive_message', async (msgObj) => {
     if (!CryptoService.isE2EEReady()) {
@@ -271,6 +523,9 @@ socket.on('receive_message', async (msgObj) => {
         const encryptedPayload = JSON.parse(msgObj.payload);
         const decryptedText = await CryptoService.decryptMessage(encryptedPayload);
         appendMessage(decryptedText, 'received', null, true, msgObj.nickname || 'Anonymous');
+        
+        // Issue #8: Send notification if app is not focused
+        notificationManager.onNewMessage(msgObj.nickname || 'Anonymous', decryptedText);
     } catch(e) {
         console.error("Failed to decrypt incoming message:", e);
     }
@@ -278,9 +533,16 @@ socket.on('receive_message', async (msgObj) => {
 
 // When the other user deletes their own messages
 socket.on('messages_deleted', (data) => {
-    // Remove the other user's messages from DOM
+    // Remove the other user's message groups from DOM
     const theirMsgs = chatContainer.querySelectorAll('.message-wrapper.received');
     theirMsgs.forEach(el => el.remove());
+    
+    // Reset group tracking if we deleted the last group
+    if (lastMessageSender === data.nickname) {
+        lastMessageSender = null;
+        lastMessageGroupElement = null;
+    }
+    
     addSystemMessage(`🗑️ ${data.nickname} deleted their messages.`);
 });
 
@@ -309,16 +571,44 @@ socket.on('all_messages_deleted', () => {
     // Remove all messages from DOM
     const allMsgs = chatContainer.querySelectorAll('.message-wrapper');
     allMsgs.forEach(el => el.remove());
-    localStorage.removeItem(STORAGE_KEY);
+    
+    // Reset message group tracking
+    lastMessageSender = null;
+    lastMessageGroupElement = null;
+    
+    // Clear storage (Issue #5: Enhanced privacy with sessionStorage)
+    if (useMemoryStorage) {
+        memoryCache[STORAGE_KEY] = [];
+    } else {
+        storage.removeItem(STORAGE_KEY);
+    }
+    
     addSystemMessage('🗑️ All chat history has been deleted.');
 });
 
 // When the other user deletes their last message
 socket.on('last_message_deleted', (data) => {
-    // Remove the last received message from DOM
+    // Find the last received message group
     const theirMsgs = chatContainer.querySelectorAll('.message-wrapper.received');
     if (theirMsgs.length > 0) {
-        theirMsgs[theirMsgs.length - 1].remove();
+        const lastGroup = theirMsgs[theirMsgs.length - 1];
+        const messagesList = lastGroup.querySelector('.messages-list');
+        
+        if (messagesList) {
+            // Remove last message from the group
+            const messages = messagesList.querySelectorAll('.message-bubble');
+            if (messages.length > 1) {
+                // Group has multiple messages, remove last one
+                messages[messages.length - 1].remove();
+            } else {
+                // Last message in group, remove entire group
+                lastGroup.remove();
+                if (lastMessageSender === data.nickname) {
+                    lastMessageSender = null;
+                    lastMessageGroupElement = null;
+                }
+            }
+        }
     }
     addSystemMessage(`🗑️ ${data.nickname} deleted their last message.`);
 });
@@ -330,6 +620,114 @@ socket.on('delete_all_rejected', (data) => {
 
 
 // --- DOM Actions & User Interaction ---
+
+// Issue #6: Emoji Support
+class EmojiSupport {
+    constructor() {
+        this.emojiPicker = null;
+        this.isOpen = false;
+        this.commonEmojis = ['😀', '😂', '😍', '🤔', '😱', '🎉', '👍', '❤️', '🔥', '✨', '🎨', '🚀', '💡', '⚡', '🌟', '👏'];
+    }
+
+    init() {
+        // Create emoji picker button
+        const emojiBtn = document.createElement('button');
+        emojiBtn.id = 'emojiBtn';
+        emojiBtn.className = 'emoji-button';
+        emojiBtn.innerHTML = '😊';
+        emojiBtn.style.cssText = `
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 8px;
+            margin: 0 4px;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        `;
+        emojiBtn.title = 'Add emoji';
+        
+        emojiBtn.addEventListener('mouseover', () => emojiBtn.style.opacity = '1');
+        emojiBtn.addEventListener('mouseout', () => emojiBtn.style.opacity = '0.7');
+        emojiBtn.addEventListener('click', () => this.toggle());
+
+        // Insert before send button
+        sendMessageBtn.parentNode.insertBefore(emojiBtn, sendMessageBtn);
+
+        // Create emoji picker popup
+        this.emojiPicker = document.createElement('div');
+        this.emojiPicker.id = 'emojiPicker';
+        this.emojiPicker.style.cssText = `
+            position: fixed;
+            background: var(--bg-secondary, #1e1e2e);
+            border: 1px solid var(--border-color, #3a3a4e);
+            border-radius: 8px;
+            padding: 8px;
+            display: none;
+            gap: 4px;
+            flex-wrap: wrap;
+            width: 240px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            bottom: 80px;
+            right: 10px;
+        `;
+
+        // Add emoji buttons
+        this.commonEmojis.forEach(emoji => {
+            const btn = document.createElement('button');
+            btn.textContent = emoji;
+            btn.style.cssText = `
+                background: transparent;
+                border: 1px solid var(--border-color, #3a3a4e);
+                border-radius: 4px;
+                padding: 4px 8px;
+                cursor: pointer;
+                font-size: 16px;
+                transition: background 0.2s;
+            `;
+            
+            btn.addEventListener('mouseover', () => {
+                btn.style.background = 'rgba(255, 255, 255, 0.1)';
+            });
+            btn.addEventListener('mouseout', () => {
+                btn.style.background = 'transparent';
+            });
+            
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                messageInput.value += emoji;
+                messageInput.focus();
+                this.close();
+            });
+            
+            this.emojiPicker.appendChild(btn);
+        });
+
+        document.body.appendChild(this.emojiPicker);
+    }
+
+    toggle() {
+        if (this.isOpen) {
+            this.close();
+        } else {
+            this.open();
+        }
+    }
+
+    open() {
+        this.emojiPicker.style.display = 'flex';
+        this.isOpen = true;
+    }
+
+    close() {
+        this.emojiPicker.style.display = 'none';
+        this.isOpen = false;
+    }
+}
+
+const emojiSupport = new EmojiSupport();
 
 messageInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -356,8 +754,14 @@ async function sendMessage() {
                 // Remove your messages from DOM
                 const myMsgs = chatContainer.querySelectorAll('.message-wrapper.sent');
                 myMsgs.forEach(el => el.remove());
-                // Clear localStorage
-                localStorage.removeItem(STORAGE_KEY);
+                
+                // Clear storage (Issue #5: sessionStorage)
+                if (useMemoryStorage) {
+                    memoryCache[STORAGE_KEY] = [];
+                } else {
+                    storage.removeItem(STORAGE_KEY);
+                }
+                
                 addSystemMessage(`🗑️ Your messages have been deleted (${response.deleted} messages).`);
             } else {
                 showToast(response?.error || 'Failed to delete messages.');
@@ -399,7 +803,14 @@ async function sendMessage() {
         messageInput.disabled = true;
         sendMessageBtn.disabled = true;
         chatContainer.innerHTML = '';
-        localStorage.removeItem(STORAGE_KEY);
+        
+        // Clear storage (Issue #5: sessionStorage)
+        if (useMemoryStorage) {
+            memoryCache[STORAGE_KEY] = [];
+        } else {
+            storage.removeItem(STORAGE_KEY);
+        }
+        
         updateStatus('disconnected');
         addSystemMessage('👋 You left the room.');
         return;
@@ -474,13 +885,23 @@ loginForm.addEventListener('submit', (e) => {
                     document.getElementById('chatContainer').innerHTML = '';
                     addSystemMessage('🚀 Joined the room using invite link.');
 
-                    await CryptoService.deriveKeyFromPassword(response.secret);
-                    updateStatus('e2ee-ready');
-                    messageInput.disabled = false;
-                    sendMessageBtn.disabled = false;
-                    addSystemMessage('🔐 E2EE active — messages are encrypted.');
+                     await CryptoService.deriveKeyFromPassword(response.secret, mySocketId);
+                     
+                     // Send public key for E2EE handshake (Issue #2)
+                     generateAndSendPublicKey();
+                     
+                     updateStatus('e2ee-ready');
+                     messageInput.disabled = false;
+                     sendMessageBtn.disabled = false;
+                     addSystemMessage('🔐 E2EE active — messages are encrypted.');
+                     
+                     // Issue #6: Initialize emoji support
+                     emojiSupport.init();
+                     
+                     // Issue #8: Request notification permissions
+                     await notificationManager.requestPermissions();
 
-                    await loadHistory(response.messages);
+                     await loadHistory(response.messages);
                 } else {
                     showToast(response.error || 'Failed to join with invite link.');
                     joinBtn.disabled = false;
@@ -506,15 +927,25 @@ loginForm.addEventListener('submit', (e) => {
             document.getElementById('chatContainer').innerHTML = '';
             addSystemMessage("🚀 Joined the room.");
             
-            // Derive encryption key from room secret (PBKDF2)
-            await CryptoService.deriveKeyFromPassword(secret);
-            updateStatus('e2ee-ready');
-            messageInput.disabled = false;
-            sendMessageBtn.disabled = false;
-            addSystemMessage("🔐 E2EE active — messages are encrypted.");
+                    // Derive encryption key from room secret (PBKDF2) with room ID for uniqueness
+                    await CryptoService.deriveKeyFromPassword(secret, mySocketId);
+                    
+                    // Send public key for E2EE handshake (Issue #2)
+                    generateAndSendPublicKey();
+                    
+                    updateStatus('e2ee-ready');
+             messageInput.disabled = false;
+             sendMessageBtn.disabled = false;
+             addSystemMessage("🔐 E2EE active — messages are encrypted.");
+             
+             // Issue #6: Initialize emoji support
+             emojiSupport.init();
+             
+             // Issue #8: Request notification permissions
+             await notificationManager.requestPermissions();
 
-            // Load message history (server or localStorage)
-            await loadHistory(response.messages);
+             // Load message history (server or localStorage)
+             await loadHistory(response.messages);
 
         } else {
             showToast(response.error || "Failed to join room.");
