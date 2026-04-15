@@ -122,6 +122,41 @@ const CryptoService = (() => {
     }
 
     /**
+     * Step 3: Message Decryption (AES-GCM)
+     * Takes base64 ciphertext and IV, decrypts it using the PBKDF2 derived key.
+     * Returns the plaintext string.
+     */
+    async function decryptMessage(ciphertextBase64, ivBase64) {
+        if (!derivedKey) {
+            throw new Error("Decryption key is not ready.");
+        }
+
+        try {
+            const encryptedArray = new Uint8Array(atob(ciphertextBase64).split('').map(char => char.charCodeAt(0)));
+            const ivArray = new Uint8Array(atob(ivBase64).split('').map(char => char.charCodeAt(0)));
+
+            const PlainTextBuffer = await window.crypto.subtle.decrypt(
+                { name: "AES-GCM", iv: ivArray },
+                derivedKey,
+                encryptedArray
+            );
+
+            const decoder = new TextDecoder();
+            return decoder.decode(PlainTextBuffer);
+        } catch (error) {
+            console.error("Decryption error:", error);
+            throw new Error("Message decryption failed. Invalid key or corrupted data.");
+        }
+    }
+
+    /**
+     * Helper to check if E2EE encryption key is generated and ready to use.
+     */
+    function isE2EEReady() {
+        return derivedKey !== null;
+    }
+
+    /**
      * ECDH-based Shared Secret Generation (Issue #2: Improved security)
      * 
      * In a production multi-room scenario, this would use:

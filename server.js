@@ -296,7 +296,14 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // Validate payload size (DoS protection - Issue #4)
+        // Accept payload as either an object or a JSON string (client may send either)
+        if (typeof payload === 'string') {
+            try { payload = JSON.parse(payload); } catch (e) {
+                if (callback) callback({ success: false, error: "Invalid payload format (bad JSON)." });
+                return;
+            }
+        }
+
         if (!payload || typeof payload !== 'object') {
             if (callback) callback({ success: false, error: "Invalid payload format." });
             return;

@@ -488,6 +488,50 @@
             background-color: var(--bg-surface-hover);
             transform: translateY(-1px);
         }
+        /* ── Task #1: Mute Toggle & Header Controls ── */
+        .header-controls { display: flex; gap: 0.5rem; align-items: center; }
+        .icon-btn {
+            background: none;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-full);
+            color: var(--text-secondary);
+            width: 2rem; height: 2rem;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; font-size: 0.85rem;
+            transition: var(--transition-all);
+            flex-shrink: 0; padding: 0; line-height: 1;
+        }
+        .icon-btn:hover { background: var(--bg-surface-hover); color: var(--text-primary); border-color: var(--accent-primary); }
+        .icon-btn.muted { color: var(--accent-danger); border-color: var(--accent-danger); }
+
+        /* ── Task #2: Smart Timestamp Hover Tooltip ── */
+        .message-time-wrapper { position: relative; display: inline-flex; align-items: center; }
+        .full-datetime {
+            position: absolute;
+            bottom: calc(100% + 4px);
+            left: 50%; transform: translateX(-50%);
+            background: var(--bg-base); border: 1px solid var(--border-color);
+            border-radius: var(--radius-md); padding: 0.25rem 0.6rem;
+            font-size: 0.68rem; white-space: nowrap; color: var(--text-primary);
+            pointer-events: none; visibility: hidden; opacity: 0;
+            transition: opacity 0.18s ease; z-index: 20;
+            box-shadow: var(--shadow-sm);
+        }
+        /* Use visibility (not display) to avoid layout shift */
+        .message-meta:hover .full-datetime { visibility: visible; opacity: 1; }
+
+        /* ── Task #3: Emoji Picker ── */
+        .emoji-button {
+            background: none;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-full);
+            color: var(--text-secondary);
+            width: 2.5rem; height: 2.5rem;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; font-size: 1.1rem;
+            transition: var(--transition-all); flex-shrink: 0;
+        }
+        .emoji-button:hover { background: var(--bg-surface-hover); border-color: var(--accent-primary); }
     </style>
 </head>
 <body>
@@ -539,7 +583,8 @@
                 </svg>
                 <h1>SecureChat</h1>
             </div>
-            <div style="display:flex; gap: 10px; align-items:center;">
+            <div class="header-controls">
+                <button id="muteBtn" class="icon-btn" title="Sound alerts on — click to mute" aria-label="Toggle sound alerts">🔔</button>
                 <button id="copyInviteBtn" class="status-badge" style="cursor:pointer; display:none; background:var(--accent-primary); color:white; border:none;" title="Click to copy auto-join invite link">
                     Copy Link
                 </button>
